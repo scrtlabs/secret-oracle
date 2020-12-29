@@ -2,6 +2,7 @@ use cosmwasm_std::{CanonicalAddr, HumanAddr, Uint128};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct Price {
     pub symbol: String,
     pub price: Uint128,

@@ -1,16 +1,17 @@
+use cosmwasm_std::{
+    to_binary, Api, Binary, Env, Extern, HandleResponse, HumanAddr, InitResponse, Querier,
+    StdError, StdResult, Storage, Uint128,
+};
+use secret_toolkit::storage::{AppendStore, TypedStore, TypedStoreMut};
+
 use crate::msg::{
-    CountResponse, HandleMsg, InitMsg, Price, QueryMsg, QueryPricesResponse, QuerySymbolsResponse,
+    HandleMsg, InitMsg, Price, QueryMsg, QueryPricesResponse, QuerySymbolsResponse,
     QueryValidatorsResponse,
 };
 use crate::state::{
     config, config_read, get_all_predictions, get_validator_from_key, store_prediction,
     store_symbol, symbol_exists, Prediction, State, ValidatorKey,
 };
-use cosmwasm_std::{
-    to_binary, Api, Binary, Env, Extern, HandleResponse, HumanAddr, InitResponse, Querier,
-    StdError, StdResult, Storage, Uint128,
-};
-use secret_toolkit::storage::{AppendStore, TypedStore, TypedStoreMut};
 
 pub fn init<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
@@ -49,10 +50,18 @@ pub fn register<S: Storage, A: Api, Q: Querier>(
 ) -> StdResult<HandleResponse> {
     let validator = env.message.sender;
 
+    let (_, data) = bech32_no_std::decode(&validator.0)
+        .map_err(|_| StdError::generic_err("failed to decode address as bech32"))?;
+
+    let valoperaddr = HumanAddr(
+        bech32_no_std::encode("secretvaloper", data)
+            .map_err(|_| StdError::generic_err("failed to encode address as bech32"))?,
+    );
+
     let vals = deps.querier.query_validators()?;
 
     // validates that a validator is part of the active validator set
-    if !vals.iter().any(|v| v.address == validator) {
+    if !vals.iter().any(|v| v.address == valoperaddr) {
         return Err(StdError::generic_err(format!(
             "{} is not in the current validator set",
             validator
@@ -61,7 +70,7 @@ pub fn register<S: Storage, A: Api, Q: Querier>(
 
     let validator_record = ValidatorKey {
         validator_key: validator_key.unwrap(),
-        validator,
+        validator: valoperaddr,
     };
 
     config(&mut deps.storage).update(|mut state| {
@@ -90,7 +99,7 @@ pub fn predict_prices<S: Storage, A: Api, Q: Querier>(
         // todo: validate price format
 
         // store all symbols so we can query them easily
-        if !symbol_exists(&deps.storage, &price.symbol) {
+        if !symbol_exists(&deps.storage, &price.symbol)? {
             store_symbol(&mut deps.storage, &price.symbol);
         }
 
@@ -130,7 +139,7 @@ fn query_price<S: Storage, A: Api, Q: Querier>(
     let mut prices: Vec<Price> = vec![];
 
     for s in symbols {
-        let all_prices = get_all_predictions(&deps.storage, s)?;
+        let all_prices = get_all_predictions(&deps.storage, s.clone())?;
         let mut average: Uint128 = Uint128::zero();
         let mut num = 0;
         for p in all_prices.iter() {
@@ -138,18 +147,18 @@ fn query_price<S: Storage, A: Api, Q: Querier>(
             num += 1;
         }
 
-        if !num {
+        if num == 0 {
             continue;
         }
 
-        average = average / num;
+        average = Uint128::from(average.u128() / num);
         prices.push(Price {
             symbol: s.clone(),
             price: average,
         })
     }
 
-    Ok(QueryPricesResponse { prices: vec![] })
+    Ok(QueryPricesResponse { prices })
 }
 
 fn query_symbols<S: Storage, A: Api, Q: Querier>(
@@ -176,7 +185,8 @@ fn query_validators<S: Storage, A: Api, Q: Querier>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env};
     use cosmwasm_std::{coins, from_binary, StdError};
+
+    use super::*;
 }

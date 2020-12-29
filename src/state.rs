@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub static CONFIG_KEY: &[u8] = b"config";
 pub static PREDICTIONS_KEY: &[u8] = b"predictions";
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
 pub struct ValidatorKey {
     pub validator: HumanAddr,
     pub validator_key: String,
@@ -22,6 +22,13 @@ pub struct State {
     pub owner: CanonicalAddr,
     pub validators: Vec<ValidatorKey>,
     pub symbols: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Prediction {
+    pub prediction: Price,
+    pub validator: HumanAddr,
+    pub timestamp: u64,
 }
 
 pub fn config<S: Storage>(storage: &mut S) -> Singleton<S, State> {
@@ -53,7 +60,7 @@ pub fn get_validator_from_key<S: Storage>(
 pub fn symbol_exists<S: Storage>(storage: &S, symbol: &String) -> StdResult<bool> {
     let state = config_read(storage).load()?;
     for s in state.symbols {
-        if s == symbol {
+        if &s == symbol {
             return Ok(true);
         }
     }
@@ -63,13 +70,7 @@ pub fn symbol_exists<S: Storage>(storage: &S, symbol: &String) -> StdResult<bool
 pub fn store_symbol<S: Storage>(storage: &mut S, symbol: &String) -> StdResult<()> {
     let mut state = config_read(storage).load()?;
     state.symbols.push(symbol.clone());
-    Ok(config(&mut deps.storage).save(&state)?)
-}
-
-pub struct Prediction {
-    pub prediction: Price,
-    pub validator: HumanAddr,
-    pub timestamp: u64,
+    Ok(config(storage).save(&state)?)
 }
 
 pub fn store_prediction<S: Storage>(
@@ -80,9 +81,24 @@ pub fn store_prediction<S: Storage>(
     // validate that the prediction was made by an authorized party
     let mut store = PrefixedStorage::multilevel(&[PREDICTIONS_KEY, symbol.as_bytes()], storage);
 
-    let mut store = AppendStoreMut::attach_or_create(&mut store)?;
+    let mut store: AppendStoreMut<Prediction, PrefixedStorage<S>> =
+        AppendStoreMut::attach_or_create(&mut store)?;
 
-    store.push(prediciton)
+    let mut found = false;
+    let mut pos = 0;
+    for p in store.iter() {
+        if p?.validator == prediciton.validator {
+            found = true;
+            break;
+        }
+        pos += 1;
+    }
+
+    if found {
+        store.set_at(pos as u32, prediciton)
+    } else {
+        store.push(prediciton)
+    }
 }
 
 pub fn get_all_predictions<S: Storage>(storage: &S, symbol: String) -> StdResult<Vec<Prediction>> {
